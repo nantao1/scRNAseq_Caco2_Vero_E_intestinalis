@@ -1,0 +1,235 @@
+setwd("/vast/gbhabha1/JHU_hot_data/home/nantao1/scrnaseq/processing/20250815/NVASC044_20260722")
+
+library(Seurat)
+library(tidyverse)
+library(RColorBrewer)
+
+raw.data <- Read10X(data.dir = "/vast/gbhabha1/JHU_hot_data/home/nantao1/scrnaseq/cellranger_counts/20250815/Caco2_Ei/outs/filtered_feature_bc_matrix")
+raw.gene.count <- raw.data$`Gene Expression`
+dim(raw.gene.count) 
+# 22131 26601
+raw.HTO.count <- raw.data$`Antibody Capture`
+dim(raw.HTO.count)
+#  6 26601
+joint.bcs <- intersect(colnames(raw.gene.count), colnames(raw.HTO.count))
+raw.gene.count <- raw.gene.count[, joint.bcs]
+rownames(raw.HTO.count) 
+# "Human_hashtag_TotalSeqB_5"  "Human_hashtag_TotalSeqB_6"  "Human_hashtag_TotalSeqB_7"  "Human_hashtag_TotalSeqB_8" "Human_hashtag_TotalSeqB_9"  "Human_hashtag_TotalSeqB_10"
+rownames(raw.HTO.count) <- c("caco2-12hpi", "caco2-18hpi", "caco2-24hpi", "caco2-36hpi","caco2-42hpi", "caco2-ctrl")
+rownames(raw.HTO.count)
+# "caco2-12hpi", "caco2-18hpi", "caco2-24hpi", "caco2-36hpi","caco2-42hpi", "caco2-ctrl"
+gene.hashtag <- CreateSeuratObject(counts = raw.gene.count) 
+percent.mt <- PercentageFeatureSet(gene.hashtag, pattern = "MT-")
+gene.hashtag <- AddMetaData(gene.hashtag, metadata = percent.mt, col.name = "percent.mt")
+percent.microsporidia <- PercentageFeatureSet(gene.hashtag, pattern = "^EI50506-")
+gene.hashtag <- AddMetaData(gene.hashtag, metadata = percent.microsporidia, col.name = "percent.microsporidia")
+head(gene.hashtag, n=10)
+# Adding HTO information before
+gene.hashtag[["HTO"]] <- CreateAssayObject(counts = raw.HTO.count)
+gene.hashtag <- NormalizeData(gene.hashtag, assay = "HTO", normalization.method = "CLR")
+gene.hashtag <- HTODemux(gene.hashtag, assay = "HTO", positive.quantile = 0.99)
+table(gene.hashtag$HTO_classification.global)
+#Doublet= 2984  Negative= 711  Single= 22906   
+table(gene.hashtag$HTO_classification)
+# subset singlet
+gene.hashtag<- subset(gene.hashtag, idents = c("caco2-12hpi", "caco2-18hpi", "caco2-24hpi", "caco2-36hpi","caco2-42hpi", "caco2-ctrl"))
+dim(gene.hashtag)
+# 22131 22906
+#separate out microsporidia transcripts
+options(max.print = 100000)
+rownames(gene.hashtag)
+# subset microsporidia transcripts = 20121-22131
+Expt1_MicrosporidiaOnly <- subset(gene.hashtag[20121:22131, ])
+dim(Expt1_MicrosporidiaOnly)
+# 2011 22906
+#normalize data 
+Expt1_MicrosporidiaOnly <- NormalizeData(Expt1_MicrosporidiaOnly)
+Expt1_MicrosporidiaOnly <- FindVariableFeatures(Expt1_MicrosporidiaOnly, selection.method = "vst", nfeatures = 3000)
+# using just the highly variable features to scale data
+Expt1_MicrosporidiaOnly <- ScaleData(Expt1_MicrosporidiaOnly)
+
+# import information from the 0.2% microsporidia cut off in NVASC041
+NVASC043_infected_cell_barcodes_and_clusters_0.2 <- read_csv("NVASC043_infected_cell_barcodes_and_clusters_0.2.csv")
+
+#subset the 0.2% microsporidia transcripts
+NVASC043_infected_cell_barcodes_and_clusters <- subset(NVASC043_infected_cell_barcodes_and_clusters_0.2, subset = percent.microsporidia > 0.2)
+
+# Subset only infected cells that contain more than 0.2% of microsporidian transcripts from NVASC043. By doing this, we don't have to perform filtering out
+cell.use <- NVASC043_infected_cell_barcodes_and_clusters$...1
+Expt1_MicrosporidiaOnly <- subset(Expt1_MicrosporidiaOnly, cells = cell.use)
+dim(Expt1_MicrosporidiaOnly)
+#  2011 10915
+
+# Add the cluster information from NVASC043. Remember to grab the column from the subsetted object that has >0.2 percent microsporidia transcripts
+NVASC043_clusters <- NVASC043_infected_cell_barcodes_and_clusters$renamed_idents
+Expt1_MicrosporidiaOnly <- AddMetaData(Expt1_MicrosporidiaOnly, metadata = NVASC043_clusters, col.name = "NVASC043_clusters")
+
+# clean up 
+rm(raw.data, gene.hashtag, percent.mt, raw.gene.count, raw.HTO.count, joint.bcs, percent.microsporidia, percent.mt)
+
+# Run PCA and find which PCs to include
+Expt1_MicrosporidiaOnly <- RunPCA(Expt1_MicrosporidiaOnly)
+percent.pc <- Expt1_MicrosporidiaOnly@reductions$pca@stdev / sum(Expt1_MicrosporidiaOnly@reductions$pca@stdev) * 100
+cum.percent.pc <- cumsum(percent.pc)
+cum.percent.pc
+ElbowPlot(Expt1_MicrosporidiaOnly)
+# Find neighbours and clusters
+set.seed(2025)
+Expt1_MicrosporidiaOnly <- FindNeighbors(Expt1_MicrosporidiaOnly, dims = 1:43)
+Expt1_MicrosporidiaOnly <- FindClusters(Expt1_MicrosporidiaOnly, resolution = c(0.2, 0.25, 0.3, 0.4))
+# Run UMAP
+Expt1_MicrosporidiaOnly  <- RunUMAP(Expt1_MicrosporidiaOnly , dims = 1:43)
+DimPlot(Expt1_MicrosporidiaOnly, pt.size = 0.1, label = T, label.size = 4, cols = "Paired")
+FeaturePlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia")
+p1 <- DimPlot(Expt1_MicrosporidiaOnly, group.by = "RNA_snn_res.0.2", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.2")
+p2 <- DimPlot(Expt1_MicrosporidiaOnly, group.by = "RNA_snn_res.0.25", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.25")
+p3 <- DimPlot(Expt1_MicrosporidiaOnly, group.by = "RNA_snn_res.0.3", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.3")
+p4 <- DimPlot(Expt1_MicrosporidiaOnly, group.by = "RNA_snn_res.0.4", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.4")
+p1 + p2 + p3 + p4
+
+#save old cluster system (RNA_snn_res.0.4) as a reference
+Idents(Expt1_MicrosporidiaOnly) <- "RNA_snn_res.0.4"
+Expt1_MicrosporidiaOnly[["Old.cluster0.4"]] <- Idents(Expt1_MicrosporidiaOnly)
+view(Expt1_MicrosporidiaOnly)
+
+
+#Name new cluster system
+Expt1_MicrosporidiaOnly <- RenameIdents(object = Expt1_MicrosporidiaOnly, '3' = "P0", '2' = "P1", '0' = "P2", '1' = "P3", '4' = "P4", '5' = 'P5')
+# save new idents as a separate column
+Expt1_MicrosporidiaOnly$renamed_idents <- Idents(Expt1_MicrosporidiaOnly)
+
+DimPlot(Expt1_MicrosporidiaOnly, pt.size = 0.1, label = T, label.size = 4, cols = "Paired")
+FeaturePlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia", label = T, label.size = 4)
+
+DimPlot(Expt1_MicrosporidiaOnly, label = T, split.by = "HTO_classification", cols = "Paired", pt.size = 0.4, label.size = 5)
+FeaturePlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia", split.by = "HTO_classification", label = T, label.size = 5)
+
+# number of infected cells per cluster per time point with a 0.2% microsporidia cut off
+no.cells_0.2percentmicrosporidia <- table(Expt1_MicrosporidiaOnly$renamed_idents, Expt1_MicrosporidiaOnly$HTO_classification)
+df_plot1 <- as.data.frame(no.cells_0.2percentmicrosporidia)
+colnames(df_plot1) <- c("Parasite_Cluster", "Hash.id", "Cell_Count")
+write.csv(df_plot1, file = "infected_cell_0.2microsporidia_counts.csv", row.names = FALSE)
+
+# number of infected cells per cluster per host cluster with a 0.2% microsporidia cut off
+no.cells_0.2percentmicrosporidia_host <- table(Expt1_MicrosporidiaOnly$renamed_idents, Expt1_MicrosporidiaOnly$NVASC043_clusters)
+df_plot2 <- as.data.frame(no.cells_0.2percentmicrosporidia_host)
+colnames(df_plot2) <- c("Parasite_Cluster", "Host_Cluster", "Cell_Count")
+write.csv(df_plot2, file = "infected_cell_0.2microsporidia_host_counts.csv", row.names = FALSE)
+
+# perform DGE
+DefaultAssay(Expt1_MicrosporidiaOnly) <- "RNA"
+RNA_allmarkers <- FindAllMarkers(Expt1_MicrosporidiaOnly, min.pct = 0.25)
+RNA_allmarkers_pos <- subset(RNA_allmarkers, subset = RNA_allmarkers$avg_log2FC > 0)
+RNA_allmarkers_neg <- subset(RNA_allmarkers, subset = RNA_allmarkers$avg_log2FC < 0)
+allmarkers_pos_morethan0.5 <- subset(RNA_allmarkers_pos, subset = RNA_allmarkers_pos$avg_log2FC >= 0.5)
+allmarkers_neg_lessthan0.5 <- subset(RNA_allmarkers_neg, subset = RNA_allmarkers_neg$avg_log2FC <= -0.5)
+write.csv(RNA_allmarkers,"NVASC044_LogNorm_RNAallmarkers.csv")
+write.csv(RNA_allmarkers_pos, "NVASC044_LogNorm_RNAallmarkers_pos.csv")
+write.csv(RNA_allmarkers_neg, "NVASC044_LogNorm_RNAallmarkers_neg.csv")
+write.csv(allmarkers_pos_morethan0.5, "NVASC044_LogNorm_RNAallmarkers_pos_morethan0.5.csv")
+write.csv(allmarkers_neg_lessthan0.5, "NVASC044_LogNorm_RNAallmarkers_neg_lessthan0.5.csv")
+RNA_allmarkers_top10 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(10, avg_log2FC)
+RNA_allmarkers_top15 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(15, avg_log2FC)
+group_colors <- brewer.pal(n = 6, name = "Paired")
+DoHeatmap(Expt1_MicrosporidiaOnly, features = unique(RNA_allmarkers_top10$gene), group.bar = T, group.colors = group_colors,
+          draw.lines = T, lines.width = 5) + scale_fill_gradientn(colours = rev(brewer.pal(n=9, name="RdBu")), na.value = "white")
+DotPlot(Expt1_MicrosporidiaOnly, features = unique(RNA_allmarkers_top10$gene)) + RotatedAxis()
+
+png("NVASC044_HeatMap.png", width = 30, height = 50, units = "cm", res = 300)
+DoHeatmap(Expt1_MicrosporidiaOnly, features = unique(RNA_allmarkers_top10$gene), 
+          group.bar = T, group.colors = group_colors,
+          draw.lines = T, lines.width = 5) + 
+  scale_fill_gradientn(colours = rev(brewer.pal(n=9, name="RdBu")), na.value = "white") +
+  scale_y_discrete(labels = function(x) gsub("EI50506-", "", x))
+dev.off()
+
+png("NVASC044_DotPlot.png", width = 50, height = 15, units = "cm", res = 300)
+DotPlot(Expt1_MicrosporidiaOnly, features = unique(RNA_allmarkers_top10$gene)) + 
+  scale_color_gradientn(colours = rev(brewer.pal(n=9, name="RdBu"))) + 
+  scale_x_discrete(labels = function(x) gsub("EI50506-", "", x)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+dev.off()
+
+png("UMAP_Caco2Microsporidia_unplit.png", width = 10, height = 8, units = "cm", res = 300)
+DimPlot(Expt1_MicrosporidiaOnly, pt.size = 0.1, label = T, label.size = 4, cols = "Paired")
+dev.off()
+
+png("UMAP_Caco2Microsporidia_unplit_unlabelled.png", width = 10, height = 8, units = "cm", res = 300)
+DimPlot(Expt1_MicrosporidiaOnly, pt.size = 0.1, label = F, label.size = 4, cols = "Paired")
+dev.off()
+
+png("FeaturePlot_Caco2Microsporidia_unplit.png", width = 10, height = 8, units = "cm", res = 300)
+FeaturePlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia", label = T, label.size = 5)
+dev.off()
+
+png("FeaturePlot_Caco2Microsporidia_unplit_unlabelled.png", width = 10, height = 8, units = "cm", res = 300)
+FeaturePlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia", label = F, label.size = 5)
+dev.off()
+
+png("UMAP_Caco2_microsporidiaOnly_res0.4.png", width = 50, height = 10, units = "cm", res = 300)
+DimPlot(Expt1_MicrosporidiaOnly, label = T, split.by = "HTO_classification", repel = FALSE,cols = "Paired", pt.size = 0.4, label.size = 4)
+dev.off()
+
+png("UMAP_Caco2_microsporidiaOnly_res0.4_unlabelled.png", width = 50, height = 10, units = "cm", res = 300)
+DimPlot(Expt1_MicrosporidiaOnly, label = F, split.by = "HTO_classification", repel = FALSE,cols = "Paired", pt.size = 0.4, label.size = 4)
+dev.off()
+
+png("FeaturePlot_Caco2_microsporidiaOnly_res0.4.png", width = 50, height = 10, units = "cm", res = 300)
+FeaturePlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia", split.by = "HTO_classification", label = T, label.size = 4)
+dev.off()
+
+png("FeaturePlot_Caco2_microsporidiaOnly_res0.4_unlabelled.png", width = 50, height = 10, units = "cm", res = 300)
+FeaturePlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia", split.by = "HTO_classification", label = F, label.size = 4)
+dev.off()
+
+saveRDS(Expt1_MicrosporidiaOnly, file = "Expt1_MicrosporidiaOnly_Caco2_processed.rds")
+
+cols <- RColorBrewer::brewer.pal(n = 8, name = "Paired")
+VlnPlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia",pt.size = 0)
+
+png("VlnPlot_percentmicrosporidia_NVASC044_20260722.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "percent.microsporidia", pt.size = 0) + scale_fill_manual(values = cols) + stat_summary(fun = mean, geom = "crossbar", width = 0.5, color = "black", linewidth = 0.3) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-070150_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-070150", pt.size = 0) + scale_fill_manual(values = cols) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-061410_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-061410", pt.size = 0) + scale_fill_manual(values = cols) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5))  + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-071150_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-071150", pt.size = 0) + scale_fill_manual(values = cols) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-060150_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-060150", pt.size = 0) + scale_fill_manual(values = cols) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-010720_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-010720", pt.size = 0) + scale_fill_manual(values = cols) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-051580_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-051580", pt.size = 0) + scale_fill_manual(values = group_colors) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-051620_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-051620", pt.size = 0) + scale_fill_manual(values = group_colors) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-010330_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-010330", pt.size = 0) + scale_fill_manual(values = group_colors) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-101630_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-101630", pt.size = 0) + scale_fill_manual(values = group_colors) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+png("VlnPlot_Eint-060140_NVASC044_20260520.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_MicrosporidiaOnly, features = "EI50506-Eint-060140", pt.size = 0) + scale_fill_manual(values = group_colors) + theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5)) + theme(legend.position = "none")
+dev.off()
+
+Average_expression <- AverageExpression(object = Expt1_MicrosporidiaOnly,assays="RNA",layer="data")
+write.csv(Average_expression, "Average_Expression_NVASC044.csv")
