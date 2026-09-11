@@ -1,0 +1,187 @@
+setwd("/vast/gbhabha1/JHU_hot_data/home/nantao1/scrnaseq/processing/20250815/NVASC034_20260902")
+
+#Load libraries
+library(Seurat)
+library(tidyverse)
+library(RColorBrewer)
+
+raw.data <- Read10X(data.dir = "/vast/gbhabha1/JHU_hot_data/home/nantao1/scrnaseq/cellranger_counts/20250815/Caco2_Ei/outs/filtered_feature_bc_matrix")
+raw.gene.count <- raw.data$`Gene Expression`
+dim(raw.gene.count) 
+# 22131 26601
+raw.HTO.count <- raw.data$`Antibody Capture`
+dim(raw.HTO.count)
+#  6 26601
+joint.bcs <- intersect(colnames(raw.gene.count), colnames(raw.HTO.count))
+raw.gene.count <- raw.gene.count[, joint.bcs]
+rownames(raw.HTO.count) 
+# "Human_hashtag_TotalSeqB_5"  "Human_hashtag_TotalSeqB_6"  "Human_hashtag_TotalSeqB_7"  "Human_hashtag_TotalSeqB_8" "Human_hashtag_TotalSeqB_9"  "Human_hashtag_TotalSeqB_10"
+rownames(raw.HTO.count) <- c("caco2-12hpi", "caco2-18hpi", "caco2-24hpi", "caco2-36hpi","caco2-42hpi", "caco2-ctrl")
+rownames(raw.HTO.count)
+# "caco2-12hpi", "caco2-18hpi", "caco2-24hpi", "caco2-36hpi","caco2-42hpi", "caco2-ctrl"
+gene.hashtag <- CreateSeuratObject(counts = raw.gene.count) 
+percent.mt <- PercentageFeatureSet(gene.hashtag, pattern = "MT-")
+gene.hashtag <- AddMetaData(gene.hashtag, metadata = percent.mt, col.name = "percent.mt")
+percent.microsporidia <- PercentageFeatureSet(gene.hashtag, pattern = "^EI50506-")
+gene.hashtag <- AddMetaData(gene.hashtag, metadata = percent.microsporidia, col.name = "percent.microsporidia")
+head(gene.hashtag, n=10)
+# Adding HTO information before
+gene.hashtag[["HTO"]] <- CreateAssayObject(counts = raw.HTO.count)
+gene.hashtag <- NormalizeData(gene.hashtag, assay = "HTO", normalization.method = "CLR")
+gene.hashtag <- HTODemux(gene.hashtag, assay = "HTO", positive.quantile = 0.99)
+table(gene.hashtag$HTO_classification.global)
+#Doublet= 2984  Negative= 711  Single= 22906   
+table(gene.hashtag$HTO_classification)
+# subset singlet
+gene.hashtag<- subset(gene.hashtag, idents = c("caco2-12hpi", "caco2-18hpi", "caco2-24hpi", "caco2-36hpi","caco2-42hpi", "caco2-ctrl"))
+dim(gene.hashtag)
+# 22131 22906
+
+# Visualize QC metrics as a violin plot
+p1 <- VlnPlot(gene.hashtag, features = "nFeature_RNA", group.by = "HTO_maxID" )
+p2 <- VlnPlot(gene.hashtag, features = "nCount_RNA", group.by = "HTO_maxID" )
+p3 <- VlnPlot(gene.hashtag, features = "percent.mt", group.by = "HTO_maxID" )
+p4 <- VlnPlot(gene.hashtag, features = "percent.microsporidia", group.by = "HTO_maxID" )
+(p1 + p2) 
+(p3 + p4)
+# decide how to subset for QC for mitochndria
+p5 <- ggplot(gene.hashtag@meta.data, aes(x=nCount_RNA, y=nFeature_RNA, color=percent.mt)) + geom_point() + scale_color_gradient(low = "grey90", high = "black") +
+  theme_classic() + ylab("nGenes") + xlab("nUMIs") + theme(text = element_text(size = 15, face = "bold"))
+p5 + geom_vline(xintercept = 1000) + geom_vline(xintercept = 30000) + geom_hline(yintercept = 400) + geom_hline(yintercept = 6500)
+# decide how to subset for QC for microsporidia
+p6 <- ggplot(gene.hashtag@meta.data, aes(x=nCount_RNA, y=nFeature_RNA, color=percent.microsporidia)) + geom_point() + scale_color_gradient(low = "grey90", high = "black") +
+  theme_classic() + ylab("nGenes") + xlab("nUMIs") + theme(text = element_text(size = 15, face = "bold"))
+p6 + geom_vline(xintercept = 1000) + geom_vline(xintercept = 30000) + geom_hline(yintercept = 400) + geom_hline(yintercept = 6500)
+# subset based on QC
+gene.hashtag <- subset(gene.hashtag, subset = nFeature_RNA > 400 & nFeature_RNA <6500 & nCount_RNA > 1000 & nCount_RNA < 30000 & percent.mt <20)
+dim(gene.hashtag)
+# 22131 22748
+
+# normalize data after QC
+gene.hashtag <- NormalizeData(gene.hashtag)
+gene.hashtag <- FindVariableFeatures(gene.hashtag, selection.method = "vst", nfeatures = 3000)
+# using just the highly variable features to scale data
+gene.hashtag <- ScaleData(gene.hashtag)
+
+# clean up 
+rm(raw.data,percent.mt, raw.gene.count, raw.HTO.count, joint.bcs, percent.microsporidia, percent.mt)
+
+# Run PCA analysis
+gene.hashtag <- RunPCA(gene.hashtag)
+percent.pc <- gene.hashtag@reductions$pca@stdev / sum(gene.hashtag@reductions$pca@stdev) * 100
+cum.percent.pc <- cumsum(percent.pc)
+cum.percent.pc
+ElbowPlot(gene.hashtag)
+# Find neighbours and clusters
+gene.hashtag <- FindNeighbors(gene.hashtag, dims = 1:40)
+gene.hashtag <- FindClusters(gene.hashtag, resolution = c(0.2, 0.25, 0.3, 0.35, 0.4))
+
+# Run UMAP
+gene.hashtag  <- RunUMAP(gene.hashtag , dims = 1:40, seed.use = 2025)
+DimPlot(gene.hashtag, pt.size = 0.1, label = T, label.size = 4, cols = "Paired")
+p7 <- DimPlot(gene.hashtag, group.by = "RNA_snn_res.0.2", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.2")
+p8 <- DimPlot(gene.hashtag, group.by = "RNA_snn_res.0.25", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.25")
+p9 <- DimPlot(gene.hashtag, group.by = "RNA_snn_res.0.3", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.3")
+p10 <- DimPlot(gene.hashtag, group.by = "RNA_snn_res.0.35", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.35")
+p11 <- DimPlot(gene.hashtag, group.by = "RNA_snn_res.0.4", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.4")
+p7 + p8 + p9 + p10 + p11
+FeaturePlot(gene.hashtag, features = "percent.microsporidia")
+
+#save old cluster system (RNA_snn_res.0.25) as a reference
+Idents(gene.hashtag) <- "RNA_snn_res.0.25"
+gene.hashtag[["Old.cluster0.25"]] <- Idents(gene.hashtag)
+view(gene.hashtag)
+
+#Name new cluster system
+gene.hashtag <- RenameIdents(object = gene.hashtag, '0' = "T0", '1' = "T6", '2' = "T1", '3' = "T7",'4' = "T2", '5' = "T4", '6' = "T5",'7' = "T3")
+# save new idents as a separate column
+gene.hashtag$renamed_idents <- Idents(gene.hashtag)
+view(gene.hashtag)
+DimPlot(gene.hashtag, label = T, split.by = "HTO_classification", cols = "Paired", pt.size = 0.4, label.size = 3)
+FeaturePlot(gene.hashtag, features = "percent.microsporidia", split.by = "HTO_classification", label = T, label.size = 3)
+
+#Unsplit plots
+DimPlot(gene.hashtag, label = T, cols = "Paired", pt.size = 0.4, label.size = 4)
+FeaturePlot(gene.hashtag, features = "percent.microsporidia", label = T, label.size = 4)
+
+# save images
+png("UMAP_Caco2_res0.25_splitbytimepoint.png", width = 50, height = 10, units = "cm", res = 300)
+DimPlot(gene.hashtag, label = T, split.by = "HTO_classification", cols = "Paired", pt.size = 0.4, label.size = 4)
+dev.off()
+
+png("FeaturePlot_Caco2_res0.25__splitbytimepoint.png", width = 50, height = 10, units = "cm", res = 300)
+FeaturePlot(gene.hashtag, features = "percent.microsporidia", split.by = "HTO_classification", label = T, label.size = 4)
+dev.off()
+
+png("UMAP_Caco2_res0.25.png", width = 12, height = 10, units = "cm", res = 300)
+DimPlot(gene.hashtag, label = T, cols = "Paired", pt.size = 0.4, label.size = 4)
+dev.off()
+
+png("UMAP_Caco2_res0.25_nolabel.png", width = 12, height = 10, units = "cm", res = 300)
+DimPlot(gene.hashtag, label = F, cols = "Paired", pt.size = 0.4, label.size = 4)
+dev.off()
+
+png("FeaturePlot_Caco2_res0.25.png", width = 12, height = 10, units = "cm", res = 300)
+FeaturePlot(gene.hashtag, features = "percent.microsporidia", label = T, label.size = 4)
+dev.off()
+
+#0.2% microsporidia
+cells_with_microsporidia_0.2 <- subset(gene.hashtag, subset = percent.microsporidia > 0.2)
+infected_cell_barcodes_0.2 <- colnames(cells_with_microsporidia_0.2)
+infected_cell_barcodes_0.2 <- data.frame(infected_cell_barcodes_0.2)
+dim(infected_cell_barcodes_0.2) 
+# 10915 (~48%)
+# add the infected cell barcodes to the metadata of gene.hashtag
+gene.hashtag$infected_cell_0.2 <- ifelse(rownames(gene.hashtag@meta.data) %in% infected_cell_barcodes_0.2$infected_cell_barcodes_0.2, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 0.2% microsporidia cut off
+infected_timepoints_0.2 <- table(gene.hashtag@meta.data$HTO_maxID, gene.hashtag@meta.data$infected_cell_0.2)
+infected_timepoints_0.2
+infected_timepoints_clusters_0.2 <- table(gene.hashtag$renamed_idents, gene.hashtag@meta.data$infected_cell_0.2)
+infected_timepoints_clusters_0.2
+
+gene.hashtag$renamed_idents <- factor(gene.hashtag$renamed_idents, levels = c("T0", "T1", "T2", "T3", "T4", "T5", "T6", "T7"))
+
+png("UMAP_Caco2_res0.25_Human&EI_YesNo_microsporidia.png", width = 12, height = 10, units = "cm", res = 300)
+DimPlot(gene.hashtag, pt.size = 0.1, label.size = 5, group.by = "infected_cell_0.2", cols = c("gray","mediumblue"))
+dev.off()
+
+png("Plot_Caco2_res0.25_Human&EI_YesNo_microsporidia.png", width = 15, height = 10, units = "cm", res = 300)
+gene.hashtag@meta.data %>% mutate(renamed_idents = factor(renamed_idents, levels = c("T0", "T1", "T2", "T3", "T4", "T5", "T6", "T7"))) %>% group_by(renamed_idents, infected_cell_0.2) %>% count() %>% group_by(renamed_idents) %>% mutate(percent=100*n/sum(n)) %>% ungroup() %>% ggplot(aes(x=renamed_idents, y=percent, fill = infected_cell_0.2)) + geom_col() + ylab("Percent") + xlab("Clusters") + theme(text = element_text(size = 17, face = "plain")) + scale_fill_brewer(palette = "Greys")
+dev.off()
+
+#DGE
+DefaultAssay(gene.hashtag) <- "RNA"
+RNA_allmarkers <- FindAllMarkers(gene.hashtag, min.pct = 0.25, only.pos = FALSE)
+RNA_allmarkers_pos <- subset(RNA_allmarkers, subset = RNA_allmarkers$avg_log2FC > 0)
+RNA_allmarkers_neg <- subset(RNA_allmarkers, subset = RNA_allmarkers$avg_log2FC < 0)
+allmarkers_pos_morethan0.5 <- subset(RNA_allmarkers_pos, subset = RNA_allmarkers_pos$avg_log2FC >= 0.5)
+allmarkers_neg_lessthan0.5 <- subset(RNA_allmarkers_neg, subset = RNA_allmarkers_neg$avg_log2FC <= -0.5)
+write.csv(RNA_allmarkers,"NVASC034_LogNorm_RNAallmarkers.csv")
+write.csv(RNA_allmarkers_pos, "NVASC034_LogNorm_RNAallmarkers_pos.csv")
+write.csv(RNA_allmarkers_neg, "NVASC034_LogNorm_RNAallmarkers_neg.csv")
+write.csv(allmarkers_pos_morethan0.5, "NVASC034_LogNorm_RNAallmarkers_pos_morethan0.5.csv")
+write.csv(allmarkers_neg_lessthan0.5, "NVASC034_LogNorm_RNAallmarkers_neg_lessthan0.5.csv")
+RNA_allmarkers_top10 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(10,avg_log2FC)
+RNA_allmarkers_top15 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(15,avg_log2FC)
+RNA_allmarkers_top5 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(5,avg_log2FC)
+cols <- brewer.pal(n = 8, name = "Paired")
+
+png("NVASC034_Caco2_Human&EI_HeatMap.png", width = 30, height = 50, units = "cm", res = 300)
+DoHeatmap(gene.hashtag, 
+          features = unique(RNA_allmarkers_top15$gene), 
+          group.bar = TRUE, 
+          group.by = "renamed_idents",
+          group.colors = cols,
+          draw.lines = TRUE, 
+          lines.width = 5) + 
+  scale_fill_gradientn(colors = rev(brewer.pal(n = 9, name = "RdBu")),
+                       na.value = "white") +
+  scale_y_discrete(labels = function(x) gsub("EI50506-Eint-", "Eint-", gsub("GRCh38--", "", x)))
+dev.off()
+
+png("NVASC034_Caco2_Human&EI_DotPlot_top15.png", width = 50, height = 15, units = "cm", res = 300)
+DotPlot(gene.hashtag, features = unique(RNA_allmarkers_top15$gene)) + 
+  scale_color_gradientn(colours = rev(brewer.pal(n=9, name="RdBu"))) + 
+  RotatedAxis() + theme(axis.text.x = element_text(size = 12),axis.text.y = element_text(size = 14)) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + scale_x_discrete(labels = function(x) gsub("EI50506-Eint-", "Eint-", gsub("GRCh38--", "", x)))
+dev.off()
