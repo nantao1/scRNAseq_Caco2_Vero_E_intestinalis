@@ -1,16 +1,16 @@
 # Load required packages
-setwd("/Users/nva_jhu_belab/Library/CloudStorage/GoogleDrive-noelle.antao@be-labs.org/Shared\ drives/Noelle_Antao_BElab/Noelle_ScRNAseq_Vero_Caco2/Figures_v3/Top50_Final/P0")
 library(tidyverse)
 library(dplyr)
 library(tidyr)
-getwd()
+
+###Analyse cluster P0
+setwd("/Users/nva_jhu_belab/Library/CloudStorage/GoogleDrive-noelle.antao@be-labs.org/Shared\ drives/Noelle_Antao_BElab/Noelle_ScRNAseq_Vero_Caco2/Figures_v3/Top50_Final/P0")
 KLM_P0_avg_exp <- read.csv("KLM_P0_avg_exp.csv")
 KLM_P0_DGE <- read.csv("KLM_P0_DGE.csv")
 caco2_P0_DGE <- read.csv("caco2_P0_DGE.csv")
 caco2_P0_avg_exp <- read.csv("caco2_P0_avg_exp.csv")
 Vero_P0_DGE <- read.csv("Vero_P0_DGE.csv")
 Vero_P0_avg_exp <- read.csv("Vero_P0_avg_exp.csv")
-
 
 Common_KLM_C <- KLM_P0_DGE %>%
   full_join(caco2_P0_DGE, by = "Gene") %>%
@@ -42,7 +42,6 @@ Common_VC2 <-Vero_P0_DGE %>%
   left_join(Vero_P0_avg_exp, by = "Gene")
 write.csv(Common_VC2, file = "Vero_C2_P0_CT50.csv", row.names = FALSE)
 
-
 # Read in the four files
 macrophage_P0_C <- read.csv("KLM_P0_CT50_Final.csv") %>% mutate(source = "KLM_C")
 macrophage_P0_V <- read.csv("KLM_P0_VT50_Final.csv") %>% mutate(source = "KLM_V")
@@ -51,12 +50,11 @@ vero_P0 <- read.csv("Vero_P0_CT50_Final.csv") %>% mutate(source = "NVA_V")
 Caco2_V_P0 <- read.csv("Caco2_V_P0_CT50_Final.csv") %>% mutate(source = "NVA_Cv")
 vero_C_P0 <- read.csv("Vero_C2_P0_CT50_Final.csv") %>% mutate(source = "NVA_vC")
 
-
 MvC <- bind_rows(macrophage_P0_C, caco2_P0)
 MvV <- bind_rows(macrophage_P0_V, vero_P0)
 CvV <- bind_rows(Caco2_V_P0, vero_C_P0)
 
-#compare macrophage and caco2 cells but keep duplicates
+##compare macrophage and caco2 cells but keep duplicates
 comparison_data_MvC_log2 <- MvC %>%
   filter(cell_line %in% c("macrophage", "caco2")) %>%
   select(Gene, log2_FC, cell_line) %>%
@@ -74,7 +72,6 @@ comparison_data_expanded_MvC_log2 <- comparison_data_expanded_MvC_log2 %>%
       macrophage != 0 & caco2 == 0 ~ "Macrophage only",
       macrophage == 0 & caco2 != 0 ~ "Caco2 only"
     ),)
-
 
 #calculate slope and intercept of the line
 model_MvC_log2 <- lm(caco2 ~ macrophage, data = comparison_data_expanded_MvC_log2)
@@ -113,8 +110,6 @@ ggplot(comparison_data_expanded_MvC_log2, aes(x = macrophage, y = caco2, color =
        color = "Gene Status") +
   theme_bw()
 dev.off()
-
-
 
 ## compare macrophage and vero cells but keep duplicates
 comparison_data_MvV_log2 <- MvV %>%
@@ -216,3 +211,5 @@ ggplot(comparison_data_expanded_CvV_log2, aes(x = caco2, y = vero, color = gene_
        color = "Gene Status") +
   theme_bw()
 dev.off()
+
+## Repeat identical analysis for all other parasite clusters (P1-P5)
