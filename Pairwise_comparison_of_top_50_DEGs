@@ -1,0 +1,218 @@
+# Load required packages
+setwd("/Users/nva_jhu_belab/Library/CloudStorage/GoogleDrive-noelle.antao@be-labs.org/Shared\ drives/Noelle_Antao_BElab/Noelle_ScRNAseq_Vero_Caco2/Figures_v3/Top50_Final/P0")
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+getwd()
+KLM_P0_avg_exp <- read.csv("KLM_P0_avg_exp.csv")
+KLM_P0_DGE <- read.csv("KLM_P0_DGE.csv")
+caco2_P0_DGE <- read.csv("caco2_P0_DGE.csv")
+caco2_P0_avg_exp <- read.csv("caco2_P0_avg_exp.csv")
+Vero_P0_DGE <- read.csv("Vero_P0_DGE.csv")
+Vero_P0_avg_exp <- read.csv("Vero_P0_avg_exp.csv")
+
+
+Common_KLM_C <- KLM_P0_DGE %>%
+  full_join(caco2_P0_DGE, by = "Gene") %>%
+  left_join(KLM_P0_avg_exp, by = "Gene")
+write.csv(Common_KLM_C, file = "KLM_P0_CT50.csv", row.names = FALSE)
+
+Common_C2 <- KLM_P0_DGE %>%
+  full_join(caco2_P0_DGE, by = "Gene") %>%
+  left_join(caco2_P0_avg_exp, by = "Gene")
+write.csv(Common_C2, file = "Caco2_P0_CT50.csv", row.names = FALSE)
+
+Common_KLM_V <- KLM_P0_DGE %>%
+  full_join(Vero_P0_DGE, by = "Gene") %>%
+  left_join(KLM_P0_avg_exp, by = "Gene")
+write.csv(Common_KLM_V, file = "KLM_P0_VT50.csv", row.names = FALSE)
+
+Common_V <-KLM_P0_DGE %>%
+  full_join(Vero_P0_DGE, by = "Gene") %>%
+  left_join(Vero_P0_avg_exp, by = "Gene")
+write.csv(Common_V, file = "Vero_P0_CT50.csv", row.names = FALSE)
+
+Common_C2V<- caco2_P0_DGE %>%
+  full_join(Vero_P0_DGE, by = "Gene") %>%
+  left_join(caco2_P0_avg_exp, by = "Gene")
+write.csv(Common_C2V, file = "Caco2_V_P0_CT50.csv", row.names = FALSE)
+
+Common_VC2 <-Vero_P0_DGE %>%
+  full_join(caco2_P0_DGE, by = "Gene") %>%
+  left_join(Vero_P0_avg_exp, by = "Gene")
+write.csv(Common_VC2, file = "Vero_C2_P0_CT50.csv", row.names = FALSE)
+
+
+# Read in the four files
+macrophage_P0_C <- read.csv("KLM_P0_CT50_Final.csv") %>% mutate(source = "KLM_C")
+macrophage_P0_V <- read.csv("KLM_P0_VT50_Final.csv") %>% mutate(source = "KLM_V")
+caco2_P0 <- read.csv("Caco2_P0_CT50_Final.csv") %>% mutate(source = "NVA_C")
+vero_P0 <- read.csv("Vero_P0_CT50_Final.csv") %>% mutate(source = "NVA_V")
+Caco2_V_P0 <- read.csv("Caco2_V_P0_CT50_Final.csv") %>% mutate(source = "NVA_Cv")
+vero_C_P0 <- read.csv("Vero_C2_P0_CT50_Final.csv") %>% mutate(source = "NVA_vC")
+
+
+MvC <- bind_rows(macrophage_P0_C, caco2_P0)
+MvV <- bind_rows(macrophage_P0_V, vero_P0)
+CvV <- bind_rows(Caco2_V_P0, vero_C_P0)
+
+#compare macrophage and caco2 cells but keep duplicates
+comparison_data_MvC_log2 <- MvC %>%
+  filter(cell_line %in% c("macrophage", "caco2")) %>%
+  select(Gene, log2_FC, cell_line) %>%
+  pivot_wider(names_from = cell_line, values_from = log2_FC)
+
+# Unnest to create multiple rows for duplicates
+comparison_data_expanded_MvC_log2 <- comparison_data_MvC_log2 %>%
+  unnest(cols = c(macrophage, caco2), keep_empty = TRUE)
+
+# Categorize
+comparison_data_expanded_MvC_log2 <- comparison_data_expanded_MvC_log2 %>%
+  mutate(
+    gene_status = case_when(
+      macrophage != 0 & caco2 != 0 ~ "Both cell lines",
+      macrophage != 0 & caco2 == 0 ~ "Macrophage only",
+      macrophage == 0 & caco2 != 0 ~ "Caco2 only"
+    ),)
+
+
+#calculate slope and intercept of the line
+model_MvC_log2 <- lm(caco2 ~ macrophage, data = comparison_data_expanded_MvC_log2)
+slope_MvC_log2 <- coef(model_MvC_log2)[2]  # Extract slope coefficient
+intercept_MvC_log2 <-coef(model_MvC_log2)[1]
+
+# Plot
+ggplot(comparison_data_expanded_MvC_log2, aes(x = macrophage, y = caco2, color = gene_status)) +
+  geom_point(alpha = 0.6, size = 3) +
+  geom_text(aes(label = ifelse(caco2 > 40, Gene, "")), 
+            vjust = -0.5, size = 3, show.legend = FALSE) +
+  geom_abline(slope = slope_MvC_log2, intercept = intercept_MvC_log2, linetype = "dashed", color = "gray30") +
+  scale_color_manual(values = c(
+    "Both cell lines" = "darkorange",
+    "Macrophage only" = "red",
+    "Caco2 only" = "yellow2"
+  )) +
+  labs(x = "Macrophage Cluster P0 Average Expression (log2)",
+       y = "Caco-2 Cluster P0 Average Expression (log2)",
+       color = "Gene Status") +
+  theme_bw()
+
+png("ScatterPlot_MacrophagevCaco2_P0.png", width = 15, height = 10, units = "cm", res = 300)
+ggplot(comparison_data_expanded_MvC_log2, aes(x = macrophage, y = caco2, color = gene_status)) +
+  geom_point(alpha = 0.6, size = 3) +
+  geom_text(aes(label = ifelse(caco2 > 40, Gene, "")), 
+            vjust = -0.5, size = 3, show.legend = FALSE) +
+  geom_abline(slope = slope_MvC_log2, intercept = intercept_MvC_log2, linetype = "dashed", color = "gray30") +
+  scale_color_manual(values = c(
+    "Both cell lines" = "darkorange",
+    "Macrophage only" = "red",
+    "Caco2 only" = "yellow2"
+  )) +
+  labs(x = "Macrophage Cluster P0 Average Expression (log2)",
+       y = "Caco-2 Cluster P0 Average Expression (log2)",
+       color = "Gene Status") +
+  theme_bw()
+dev.off()
+
+
+
+## compare macrophage and vero cells but keep duplicates
+comparison_data_MvV_log2 <- MvV %>%
+  filter(cell_line %in% c("macrophage", "vero")) %>%
+  select(Gene, log2_FC, cell_line) %>%
+  pivot_wider(names_from = cell_line, values_from = log2_FC)
+
+# Unnest to create multiple rows for duplicates
+comparison_data_expanded_MvV_log2 <- comparison_data_MvV_log2 %>%
+  unnest(cols = c(macrophage, vero), keep_empty = TRUE)
+
+# Categorize
+comparison_data_expanded_MvV_log2 <- comparison_data_expanded_MvV_log2 %>%
+  mutate(
+    gene_status = case_when(
+      macrophage != 0 & vero != 0 ~ "Both cell lines",
+      macrophage != 0 & vero == 0 ~ "Macrophage only",
+      macrophage == 0 & vero != 0 ~ "Vero only"
+    ),)
+
+#calculate slope and intercept of the line
+model_MvV_log2 <- lm(vero ~ macrophage, data = comparison_data_expanded_MvV_log2)
+slope_MvV_log2 <- coef(model_MvV_log2)[2]  # Extract slope coefficient
+intercept_MvV_log2 <-coef(model_MvV_log2)[1]
+
+# Plot
+ggplot(comparison_data_expanded_MvV_log2, aes(x = macrophage, y = vero, color = gene_status)) +
+  geom_point(alpha = 0.6, size = 3) +
+  geom_text(aes(label = ifelse(vero > 40, Gene, "")), 
+            vjust = -0.5, size = 3, show.legend = FALSE) +
+  geom_abline(slope = slope_MvV_log2, intercept = intercept_MvV_log2, linetype = "dashed", color = "gray30") +
+  scale_color_manual(values = c(
+    "Both cell lines" = "darkorange",
+    "Macrophage only" = "red",
+    "Vero only" = "yellow2"
+  )) +
+  labs(x = "Macrophage Cluster P0 Average Expression (log2)",
+       y = "Vero Cluster P0 Average Expression (log2)",
+       color = "Gene Status") +
+  theme_bw()
+
+png("ScatterPlot_MacrophagevVero_P0.png", width = 15, height = 10, units = "cm", res = 300)
+ggplot(comparison_data_expanded_MvV_log2, aes(x = macrophage, y = vero, color = gene_status)) +
+  geom_point(alpha = 0.6, size = 3) +
+  geom_text(aes(label = ifelse(vero > 40, Gene, "")), 
+            vjust = -0.5, size = 3, show.legend = FALSE) +
+  geom_abline(slope = slope_MvV_log2, intercept = intercept_MvV_log2, linetype = "dashed", color = "gray30") +
+  scale_color_manual(values = c(
+    "Both cell lines" = "darkorange",
+    "Macrophage only" = "red",
+    "Vero only" = "yellow2"
+  )) +
+  labs(x = "Macrophage Cluster P0 Average Expression (log2)",
+       y = "Vero Cluster P0 Average Expression (log2)",
+       color = "Gene Status") +
+  theme_bw()
+dev.off()
+
+## compare Caco2 and vero cells but keep duplicates
+
+comparison_data_CvV_log2 <- CvV %>%
+  filter(cell_line %in% c("caco2", "vero")) %>%
+  select(Gene, log2_FC, cell_line) %>%
+  pivot_wider(names_from = cell_line, values_from = log2_FC)
+
+# Unnest to create multiple rows for duplicates
+comparison_data_expanded_CvV_log2 <- comparison_data_CvV_log2 %>%
+  unnest(cols = c(caco2, vero), keep_empty = TRUE)
+
+# Categorize
+comparison_data_expanded_CvV_log2 <- comparison_data_expanded_CvV_log2 %>%
+  mutate(
+    gene_status = case_when(
+      caco2 != 0 & vero != 0 ~ "Both cell lines",
+      caco2 != 0 & vero == 0 ~ "Caco2 only",
+      caco2 == 0 & vero != 0 ~ "Vero only"
+    ),)
+
+
+#calculate slope and intercept of the line
+model_CvV_log2 <- lm(vero ~ caco2, data = comparison_data_expanded_CvV_log2)
+slope_CvV_log2 <- coef(model_CvV_log2)[2]  # Extract slope coefficient
+intercept_CvV_log2 <- coef(model_CvV_log2)[1]
+
+# Plot
+png("ScatterPlot_Caco2vVero_P0.png", width = 15, height = 10, units = "cm", res = 300)
+ggplot(comparison_data_expanded_CvV_log2, aes(x = caco2, y = vero, color = gene_status)) +
+  geom_point(alpha = 0.6, size = 3) +
+  geom_text(aes(label = ifelse(vero > 40, Gene, "")), 
+            vjust = -0.5, size = 3, show.legend = FALSE) +
+  geom_abline(slope = slope_CvV_log2, intercept = intercept_CvV_log2, linetype = "dashed", color = "gray30") +
+  scale_color_manual(values = c(
+    "Both cell lines" = "darkorange",
+    "Macrophage only" = "red",
+    "Vero only" = "yellow2"
+  )) +
+  labs(x = "Caco-2 Cluster P0 Average Expression (log2)",
+       y = "Vero Cluster P0 Average Expression (log2)",
+       color = "Gene Status") +
+  theme_bw()
+dev.off()
