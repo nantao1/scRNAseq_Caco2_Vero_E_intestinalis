@@ -142,11 +142,11 @@ infected_timepoints_clusters_0.2
 
 gene.hashtag$renamed_idents <- factor(gene.hashtag$renamed_idents, levels = c("T0", "T1", "T2", "T3", "T4", "T5", "T6", "T7"))
 
-png("UMAP_Caco2_res0.25_Human&EI_YesNo_microsporidia.png", width = 12, height = 10, units = "cm", res = 300)
+png("UMAP_Caco2_res0.25_Human_EI_YesNo_microsporidia.png", width = 12, height = 10, units = "cm", res = 300)
 DimPlot(gene.hashtag, pt.size = 0.1, label.size = 5, group.by = "infected_cell_0.2", cols = c("gray","mediumblue"))
 dev.off()
 
-png("Plot_Caco2_res0.25_Human&EI_YesNo_microsporidia.png", width = 15, height = 10, units = "cm", res = 300)
+png("Plot_Caco2_res0.25_Human_EI_YesNo_microsporidia.png", width = 15, height = 10, units = "cm", res = 300)
 gene.hashtag@meta.data %>% mutate(renamed_idents = factor(renamed_idents, levels = c("T0", "T1", "T2", "T3", "T4", "T5", "T6", "T7"))) %>% group_by(renamed_idents, infected_cell_0.2) %>% count() %>% group_by(renamed_idents) %>% mutate(percent=100*n/sum(n)) %>% ungroup() %>% ggplot(aes(x=renamed_idents, y=percent, fill = infected_cell_0.2)) + geom_col() + ylab("Percent") + xlab("Clusters") + theme(text = element_text(size = 17, face = "plain")) + scale_fill_brewer(palette = "Greys")
 dev.off()
 
@@ -167,7 +167,7 @@ RNA_allmarkers_top15 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(15,avg_lo
 RNA_allmarkers_top5 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(5,avg_log2FC)
 cols <- brewer.pal(n = 8, name = "Paired")
 
-png("NVASC034_Caco2_Human&EI_HeatMap.png", width = 30, height = 50, units = "cm", res = 300)
+png("NVASC034_Caco2_Human_EI_HeatMap.png", width = 30, height = 50, units = "cm", res = 300)
 DoHeatmap(gene.hashtag, 
           features = unique(RNA_allmarkers_top15$gene), 
           group.bar = TRUE, 
@@ -180,7 +180,7 @@ DoHeatmap(gene.hashtag,
   scale_y_discrete(labels = function(x) gsub("EI50506-Eint-", "Eint-", gsub("GRCh38--", "", x)))
 dev.off()
 
-png("NVASC034_Caco2_Human&EI_DotPlot_top15.png", width = 50, height = 15, units = "cm", res = 300)
+png("NVASC034_Caco2_Human_EI_DotPlot_top15.png", width = 50, height = 15, units = "cm", res = 300)
 DotPlot(gene.hashtag, features = unique(RNA_allmarkers_top15$gene)) + 
   scale_color_gradientn(colours = rev(brewer.pal(n=9, name="RdBu"))) + 
   RotatedAxis() + theme(axis.text.x = element_text(size = 12),axis.text.y = element_text(size = 14)) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + scale_x_discrete(labels = function(x) gsub("EI50506-Eint-", "Eint-", gsub("GRCh38--", "", x)))
