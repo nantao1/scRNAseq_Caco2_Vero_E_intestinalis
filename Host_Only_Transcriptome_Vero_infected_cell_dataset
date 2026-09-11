@@ -1,0 +1,391 @@
+setwd("/vast/gbhabha1/JHU_hot_data/home/nantao1/scrnaseq/processing/20251010/NVASC041_20260520")
+
+library(Seurat)
+library(tidyverse)
+library(RColorBrewer)
+
+raw.data <- Read10X(data.dir = "/vast/gbhabha1/JHU_hot_data/home/nantao1/scrnaseq/cellranger_counts/20251010/Vero_Ei/outs/filtered_feature_bc_matrix")
+raw.gene.count <- raw.data$`Gene Expression`
+dim(raw.gene.count) 
+# 21176 28116
+raw.HTO.count <- raw.data$`Antibody Capture`
+dim(raw.HTO.count)
+#   6 28116
+joint.bcs <- intersect(colnames(raw.gene.count), colnames(raw.HTO.count))
+raw.gene.count <- raw.gene.count[, joint.bcs]
+rownames(raw.HTO.count) 
+# "Human_hashtag_TotalSeqB_5"  "Human_hashtag_TotalSeqB_6"  "Human_hashtag_TotalSeqB_7"  "Human_hashtag_TotalSeqB_8" "Human_hashtag_TotalSeqB_9"  "Human_hashtag_TotalSeqB_10"
+rownames(raw.HTO.count) <- c("Vero-12hpi", "Vero-18hpi", "Vero-24hpi", "Vero-36hpi","Vero-42hpi", "Vero-ctrl")
+rownames(raw.HTO.count)
+# "Vero-12hpi", "Vero-18hpi", "Vero-24hpi", "Vero-36hpi","Vero-42hpi", "Vero-ctrl"
+gene.hashtag <- CreateSeuratObject(counts = raw.gene.count) 
+percent.mt <- PercentageFeatureSet(gene.hashtag, pattern = "MT-")
+gene.hashtag <- AddMetaData(gene.hashtag, metadata = percent.mt, col.name = "percent.mt")
+percent.microsporidia <- PercentageFeatureSet(gene.hashtag, pattern = "^EI50506-")
+gene.hashtag <- AddMetaData(gene.hashtag, metadata = percent.microsporidia, col.name = "percent.microsporidia")
+head(gene.hashtag, n=10)
+# Adding HTO information before
+gene.hashtag[["HTO"]] <- CreateAssayObject(counts = raw.HTO.count)
+gene.hashtag <- NormalizeData(gene.hashtag, assay = "HTO", normalization.method = "CLR")
+gene.hashtag <- HTODemux(gene.hashtag, assay = "HTO", positive.quantile = 0.99)
+table(gene.hashtag$HTO_classification.global)
+#Doublet= 3158  Negative= 235  Single= 24723   
+table(gene.hashtag$HTO_classification)
+
+# subset singlet
+gene.hashtag<- subset(gene.hashtag, idents = c("Vero-12hpi", "Vero-18hpi", "Vero-24hpi", "Vero-36hpi","Vero-42hpi", "Vero-ctrl"))
+dim(gene.hashtag)
+# 21176 24723
+
+#separate out Vero transcripts
+options(max.print = 100000)
+rownames(gene.hashtag)
+# subset Vero transcripts = 1 - 19165
+Expt1_VeroOnly <- subset(gene.hashtag[1:19165, ])
+dim(Expt1_VeroOnly)
+# 19165 24723
+
+# Visualize QC metrics as a violin plot
+p1 <- VlnPlot(Expt1_VeroOnly, features = "nFeature_RNA", group.by = "HTO_maxID" )
+p2 <- VlnPlot(Expt1_VeroOnly, features = "nCount_RNA", group.by = "HTO_maxID" )
+p3 <- VlnPlot(Expt1_VeroOnly, features = "percent.mt", group.by = "HTO_maxID" )
+p4 <- VlnPlot(Expt1_VeroOnly, features = "percent.microsporidia", group.by = "HTO_maxID" )
+(p1 + p2) 
+(p3 + p4)
+# decide how to subset for QC for mitochndria
+p5 <- ggplot(Expt1_VeroOnly@meta.data, aes(x=nCount_RNA, y=nFeature_RNA, color=percent.mt)) + geom_point() + scale_color_gradient(low = "grey90", high = "black") +
+  theme_classic() + ylab("nGenes") + xlab("nUMIs") + theme(text = element_text(size = 15, face = "bold"))
+p5 + geom_vline(xintercept = 1000) + geom_vline(xintercept = 16000) + geom_hline(yintercept = 400) + geom_hline(yintercept = 4500)
+# decide how to subset for QC for microsporidia
+p6 <- ggplot(Expt1_VeroOnly@meta.data, aes(x=nCount_RNA, y=nFeature_RNA, color=percent.microsporidia)) + geom_point() + scale_color_gradient(low = "grey90", high = "black") +
+  theme_classic() + ylab("nGenes") + xlab("nUMIs") + theme(text = element_text(size = 15, face = "bold"))
+p6 + geom_vline(xintercept = 1000) + geom_vline(xintercept = 16000) + geom_hline(yintercept = 400) + geom_hline(yintercept = 4500)
+
+# subset based on QC
+Expt1_VeroOnly <- subset(Expt1_VeroOnly, subset = nFeature_RNA > 400 & nFeature_RNA <4500 & nCount_RNA > 1000 & nCount_RNA < 16000 & percent.mt <20)
+dim(Expt1_VeroOnly)
+# 19165 24543
+# normalize data after QC
+Expt1_VeroOnly <- NormalizeData(Expt1_VeroOnly)
+Expt1_VeroOnly <- FindVariableFeatures(Expt1_VeroOnly, selection.method = "vst", nfeatures = 3000)
+# using just the highly variable features to scale data
+Expt1_VeroOnly <- ScaleData(Expt1_VeroOnly)
+
+# clean up 
+rm(raw.data, gene.hashtag, percent.mt, raw.gene.count, raw.HTO.count, joint.bcs, percent.microsporidia, percent.mt)
+
+# Run PCA analysis
+Expt1_VeroOnly <- RunPCA(Expt1_VeroOnly)
+percent.pc <- Expt1_VeroOnly@reductions$pca@stdev / sum(Expt1_VeroOnly@reductions$pca@stdev) * 100
+cum.percent.pc <- cumsum(percent.pc)
+cum.percent.pc
+ElbowPlot(Expt1_VeroOnly)
+# Find neighbours and clusters
+Expt1_VeroOnly <- FindNeighbors(Expt1_VeroOnly, dims = 1:43)
+Expt1_VeroOnly <- FindClusters(Expt1_VeroOnly, resolution = c(0.2, 0.25, 0.3, 0.35, 0.4))
+# Run UMAP
+Expt1_VeroOnly  <- RunUMAP(Expt1_VeroOnly , dims = 1:43, seed.use = 2025)
+DimPlot(Expt1_VeroOnly, pt.size = 0.1, label = T, label.size = 4, cols = "Paired")
+p7 <- DimPlot(Expt1_VeroOnly, group.by = "RNA_snn_res.0.2", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.2")
+p8 <- DimPlot(Expt1_VeroOnly, group.by = "RNA_snn_res.0.25", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.25")
+p9 <- DimPlot(Expt1_VeroOnly, group.by = "RNA_snn_res.0.3", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.3")
+p10 <- DimPlot(Expt1_VeroOnly, group.by = "RNA_snn_res.0.35", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.35")
+p11 <- DimPlot(Expt1_VeroOnly, group.by = "RNA_snn_res.0.4", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.4")
+p7 + p8 + p9 + p10 + p11
+FeaturePlot(Expt1_VeroOnly, features = "percent.microsporidia")
+
+#save old cluster system (RNA_snn_res.0.2) as a reference
+Idents(Expt1_VeroOnly) <- "RNA_snn_res.0.2"
+Expt1_VeroOnly[["Old.cluster0.2"]] <- Idents(Expt1_VeroOnly)
+view(Expt1_VeroOnly)
+
+#Name new cluster system
+Expt1_VeroOnly <- RenameIdents(object = Expt1_VeroOnly, '0' = "V0", '1' = "V1", '2' = "V2", '3' = "V3",'4' = "V4", '5' = "V5", '6' = "V6")
+# save new idents as a separate column
+Expt1_VeroOnly$renamed_idents <- Idents(Expt1_VeroOnly)
+view(Expt1_VeroOnly)
+DimPlot(Expt1_VeroOnly, label = T, split.by = "HTO_classification", cols = "Paired", pt.size = 0.4, label.size = 3)
+FeaturePlot(Expt1_VeroOnly, features = "percent.microsporidia", split.by = "HTO_classification", label = T, label.size = 3)
+#Unsplit plots
+DimPlot(Expt1_VeroOnly, label = T, cols = "Paired", pt.size = 0.4, label.size = 4)
+FeaturePlot(Expt1_VeroOnly, features = "percent.microsporidia", label = T, label.size = 4)
+
+
+# save images
+png("UMAP_Vero_res0.2_splitbytimepoint.png", width = 50, height = 10, units = "cm", res = 300)
+DimPlot(Expt1_VeroOnly, label = T, split.by = "HTO_classification", cols = "Paired", pt.size = 0.4, label.size = 4)
+dev.off()
+
+png("FeaturePlot_Vero_res0.2__splitbytimepoint.png", width = 50, height = 10, units = "cm", res = 300)
+FeaturePlot(Expt1_VeroOnly, features = "percent.microsporidia", split.by = "HTO_classification", label = T, label.size = 4)
+dev.off()
+
+png("UMAP_Vero_res0.2.png", width = 12, height = 10, units = "cm", res = 300)
+DimPlot(Expt1_VeroOnly, label = F, cols = "Paired", pt.size = 0.4, label.size = 4)
+dev.off()
+
+png("FeaturePlot_Vero_res0.2.png", width = 12, height = 10, units = "cm", res = 300)
+FeaturePlot(Expt1_VeroOnly, features = "percent.microsporidia", label = F, label.size = 4)
+dev.off()
+
+#find the number of cells per cluster
+no.cells.res0.2 <- table(Expt1_VeroOnly$RNA_snn_res.0.2 , Expt1_VeroOnly$HTO_maxID)
+# convert it into a a data frame and save it as an excel sheet
+df_plot_0.2 <- as.data.frame(no.cells.res0.2)
+colnames(df_plot_0.2) <- c("Cluster", "Condition", "Cell_Count")
+write.csv(df_plot_0.2, file = "no_cells_res0.2.csv", row.names = FALSE)
+
+Average_expression <- AverageExpression(object = Expt1_VeroOnly,assays="RNA",layer="data")
+write.csv(Average_expression, "Average_Expression_Vero.csv")
+
+#2% microsporidia
+cells_with_microsporidia_2 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 2)
+infected_cell_barcodes_2 <- colnames(cells_with_microsporidia_2)
+infected_cell_barcodes_2 <- data.frame(infected_cell_barcodes_2)
+dim(infected_cell_barcodes_2) 
+# 8217    (~33.5%)
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_2 <- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_2$infected_cell_barcodes_2, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepoints_2 <- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly@meta.data$infected_cell_2)
+infected_timepoints_2
+infected_timepoints_clusters_2 <- table(Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_2)
+infected_timepoints_clusters_2
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_2 <- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_2)
+infected_timepointsANDclusters_2 <- as.data.frame(infected_timepointsANDclusters_2)
+colnames(infected_timepointsANDclusters_2) <- c("Condition", "Cluster", "infected_cell_2", "Cell_Count")
+write.csv(infected_timepointsANDclusters_2, file = "no_infected_cells_2.csv", row.names = FALSE)
+
+
+#0.2% microsporidia
+cells_with_microsporidia_0.2 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 0.2)
+infected_cell_barcodes_0.2 <- colnames(cells_with_microsporidia_0.2)
+infected_cell_barcodes_0.2 <- data.frame(infected_cell_barcodes_0.2)
+dim(infected_cell_barcodes_0.2) 
+# 11192  (~45.6%)
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_0.2 <- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_0.2$infected_cell_barcodes_0.2, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 0.2% microsporidia cut off
+infected_timepoints_0.2 <- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly@meta.data$infected_cell_0.2)
+infected_timepoints_0.2
+infected_timepoints_clusters_0.2 <- table(Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_0.2)
+infected_timepoints_clusters_0.2
+
+#export spreadsheet for microsporidia analysis
+infected_cell_barcodes_and_clusters_0.2 <- Expt1_VeroOnly@meta.data[, c("percent.microsporidia", "HTO_maxID", "renamed_idents", "infected_cell_0.2")]
+NVASC041_infected_cell_barcodes_and_clusters_0.2 <- as.data.frame(infected_cell_barcodes_and_clusters_0.2)
+write.csv(NVASC041_infected_cell_barcodes_and_clusters_0.2, "NVASC041_infected_cell_barcodes_and_clusters_0.2.csv")
+
+#DGE
+DefaultAssay(Expt1_VeroOnly) <- "RNA"
+RNA_allmarkers <- FindAllMarkers(Expt1_VeroOnly, min.pct = 0.25, only.pos = FALSE)
+RNA_allmarkers_pos <- subset(RNA_allmarkers, subset = RNA_allmarkers$avg_log2FC > 0)
+RNA_allmarkers_neg <- subset(RNA_allmarkers, subset = RNA_allmarkers$avg_log2FC < 0)
+allmarkers_pos_morethan0.5 <- subset(RNA_allmarkers_pos, subset = RNA_allmarkers_pos$avg_log2FC >= 0.5)
+allmarkers_neg_lessthan0.5 <- subset(RNA_allmarkers_neg, subset = RNA_allmarkers_neg$avg_log2FC <= -0.5)
+write.csv(RNA_allmarkers,"NVASC041_LogNorm_RNAallmarkers.csv")
+write.csv(RNA_allmarkers_pos, "NVASC041_LogNorm_RNAallmarkers_pos.csv")
+write.csv(RNA_allmarkers_neg, "NVASC041_LogNorm_RNAallmarkers_neg.csv")
+write.csv(allmarkers_pos_morethan0.5, "NVASC041_LogNorm_RNAallmarkers_pos_morethan0.5.csv")
+write.csv(allmarkers_neg_lessthan0.5, "NVASC041_LogNorm_RNAallmarkers_neg_lessthan0.5.csv")
+RNA_allmarkers_top10 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(10,avg_log2FC)
+RNA_allmarkers_top15 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(15,avg_log2FC)
+RNA_allmarkers_top5 <- RNA_allmarkers %>% group_by(cluster) %>% top_n(5,avg_log2FC)
+cols <- brewer.pal(n = 8, name = "Paired")
+
+DoHeatmap(Expt1_VeroOnly, 
+          features = unique(RNA_allmarkers_top15$gene), 
+          group.bar = TRUE, 
+          group.colors = cols,
+          draw.lines = TRUE, 
+          lines.width = 5) + 
+  scale_fill_gradientn(colors = rev(brewer.pal(n = 9, name = "RdBu")),
+                       na.value = "white") +
+  scale_y_discrete(labels = function(x) gsub("ChlSab--", "", x))
+
+
+png("NVASC041_HeatMap_top15.png", width = 30, height = 50, units = "cm", res = 300)
+DoHeatmap(Expt1_VeroOnly, 
+          features = unique(RNA_allmarkers_top15$gene), 
+          group.bar = TRUE, 
+          group.colors = cols,
+          draw.lines = TRUE, 
+          lines.width = 5) + 
+  scale_fill_gradientn(colors = rev(brewer.pal(n = 9, name = "RdBu")),
+                       na.value = "white") +
+  scale_y_discrete(labels = function(x) gsub("ChlSab--", "", x))
+dev.off()
+
+
+png("NVASC041_DotPlot_top15.png", width = 50, height = 15, units = "cm", res = 300)
+DotPlot(Expt1_VeroOnly, features = unique(RNA_allmarkers_top15$gene)) + 
+  scale_color_gradientn(colours = rev(brewer.pal(n=9, name="RdBu"))) + 
+  RotatedAxis() + theme(axis.text.x = element_text(size = 12),axis.text.y = element_text(size = 14)) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + scale_x_discrete(labels = function(x) gsub("ChlSab--", "", x))
+dev.off()
+
+
+cols <- RColorBrewer::brewer.pal(n = 8, name = "Paired")
+p10 <- VlnPlot(Expt1_VeroOnly, features = "ChlSab--IL1A", pt.size = 0) + scale_fill_manual(values = cols)
+p10
+
+p11 <- VlnPlot(Expt1_VeroOnly, features = "ChlSab--TNFAIP3", pt.size = 0) + scale_fill_manual(values = cols)
+p11
+
+p12 <- VlnPlot(Expt1_VeroOnly, features = "ChlSab--NFKBIA", pt.size = 0) + scale_fill_manual(values = cols) + theme(legend.position = "none")
+p12
+
+png("VlnPlot_IL1A.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_VeroOnly, features = "ChlSab--IL1A", pt.size = 0) + scale_fill_manual(values = cols)
+dev.off()
+
+png("VlnPlot_TNFAIP3.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_VeroOnly, features = "ChlSab--TNFAIP3", pt.size = 0) + scale_fill_manual(values = cols)
+dev.off()
+
+png("VlnPlot_NFKBIA.png", width = 10, height = 8, units = "cm", res = 300)
+VlnPlot(Expt1_VeroOnly, features = "ChlSab--NFKBIA", pt.size = 0) + scale_fill_manual(values = cols)
+dev.off()
+
+#0.2% microsporidia
+cells_with_microsporidia_0.2 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 0.2)
+infected_cell_barcodes_0.2 <- colnames(cells_with_microsporidia_0.2)
+infected_cell_barcodes_0.2 <- data.frame(infected_cell_barcodes_0.2)
+dim(infected_cell_barcodes_0.2) 
+# 11192      (~45.6%)
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_0.2<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_0.2$infected_cell_barcodes_0.2, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_0.2 <- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_0.2)
+infected_timepointsANDclusters_0.2 <- as.data.frame(infected_timepointsANDclusters_0.2)
+colnames(infected_timepointsANDclusters_0.2) <- c("Condition", "Cluster", "infected_cell_0.2", "Cell_Count")
+write.csv(infected_timepointsANDclusters_0.2, file = "no_infected_cells_0.2.csv", row.names = FALSE)
+
+#0.4% microsporidia
+cells_with_microsporidia_0.4 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 0.4)
+infected_cell_barcodes_0.4 <- colnames(cells_with_microsporidia_0.4)
+infected_cell_barcodes_0.4 <- data.frame(infected_cell_barcodes_0.4)
+dim(infected_cell_barcodes_0.4) 
+# 10771   
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_0.4<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_0.4$infected_cell_barcodes_0.4, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_0.4 <- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_0.4)
+infected_timepointsANDclusters_0.4 <- as.data.frame(infected_timepointsANDclusters_0.4)
+colnames(infected_timepointsANDclusters_0.4) <- c("Condition", "Cluster", "infected_cell_0.4", "Cell_Count")
+write.csv(infected_timepointsANDclusters_0.4, file = "no_infected_cells_0.4.csv", row.names = FALSE)
+
+#1% microsporidia
+cells_with_microsporidia_1 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 1)
+infected_cell_barcodes_1 <- colnames(cells_with_microsporidia_1)
+infected_cell_barcodes_1 <- data.frame(infected_cell_barcodes_1)
+dim(infected_cell_barcodes_1) 
+# 9408
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_1<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_1$infected_cell_barcodes_1, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_1 <- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_1)
+infected_timepointsANDclusters_1 <- as.data.frame(infected_timepointsANDclusters_1)
+colnames(infected_timepointsANDclusters_1) <- c("Condition", "Cluster", "infected_cell_1", "Cell_Count")
+write.csv(infected_timepointsANDclusters_1, file = "no_infected_cells_1.csv", row.names = FALSE)
+
+#4% microsporidia
+cells_with_microsporidia_4 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 4)
+infected_cell_barcodes_4 <- colnames(cells_with_microsporidia_4)
+infected_cell_barcodes_4 <- data.frame(infected_cell_barcodes_4)
+dim(infected_cell_barcodes_4) 
+# 6774
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_4<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_4$infected_cell_barcodes_4, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_4 <- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_4)
+infected_timepointsANDclusters_4 <- as.data.frame(infected_timepointsANDclusters_4)
+colnames(infected_timepointsANDclusters_4) <- c("Condition", "Cluster", "infected_cell_4", "Cell_Count")
+write.csv(infected_timepointsANDclusters_4, file = "no_infected_cells_4.csv", row.names = FALSE)
+
+#8% microsporidia
+cells_with_microsporidia_8 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 8)
+infected_cell_barcodes_8 <- colnames(cells_with_microsporidia_8)
+infected_cell_barcodes_8 <- data.frame(infected_cell_barcodes_8)
+dim(infected_cell_barcodes_8) 
+# 5240
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_8<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_8$infected_cell_barcodes_8, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_8 <- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_8)
+infected_timepointsANDclusters_8 <- as.data.frame(infected_timepointsANDclusters_8)
+colnames(infected_timepointsANDclusters_8) <- c("Condition", "Cluster", "infected_cell_8", "Cell_Count")
+write.csv(infected_timepointsANDclusters_8, file = "no_infected_cells_8.csv", row.names = FALSE)
+
+#10% microsporidia
+cells_with_microsporidia_10 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 10)
+infected_cell_barcodes_10 <- colnames(cells_with_microsporidia_10)
+infected_cell_barcodes_10 <- data.frame(infected_cell_barcodes_10)
+dim(infected_cell_barcodes_10) 
+#  4704
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_10<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_10$infected_cell_barcodes_10, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_10<- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_10)
+infected_timepointsANDclusters_10 <- as.data.frame(infected_timepointsANDclusters_10)
+colnames(infected_timepointsANDclusters_10) <- c("Condition", "Cluster", "infected_cell_10", "Cell_Count")
+write.csv(infected_timepointsANDclusters_10, file = "no_infected_cells_10.csv", row.names = FALSE)
+
+#20% microsporidia
+cells_with_microsporidia_20 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 20)
+infected_cell_barcodes_20 <- colnames(cells_with_microsporidia_20)
+infected_cell_barcodes_20 <- data.frame(infected_cell_barcodes_20)
+dim(infected_cell_barcodes_20) 
+#  2983
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_20<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_20$infected_cell_barcodes_20, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_20<- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_20)
+infected_timepointsANDclusters_20 <- as.data.frame(infected_timepointsANDclusters_20)
+colnames(infected_timepointsANDclusters_20) <- c("Condition", "Cluster", "infected_cell_20", "Cell_Count")
+write.csv(infected_timepointsANDclusters_20, file = "no_infected_cells_20.csv", row.names = FALSE)
+
+#40% microsporidia
+cells_with_microsporidia_40 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 40)
+infected_cell_barcodes_40 <- colnames(cells_with_microsporidia_40)
+infected_cell_barcodes_40 <- data.frame(infected_cell_barcodes_40)
+dim(infected_cell_barcodes_40) 
+#  660
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_40<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_40$infected_cell_barcodes_40, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_40<- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_40)
+infected_timepointsANDclusters_40 <- as.data.frame(infected_timepointsANDclusters_40)
+colnames(infected_timepointsANDclusters_40) <- c("Condition", "Cluster", "infected_cell_40", "Cell_Count")
+write.csv(infected_timepointsANDclusters_40, file = "no_infected_cells_40.csv", row.names = FALSE)
+
+#80% microsporidia
+cells_with_microsporidia_80 <- subset(Expt1_VeroOnly, subset = percent.microsporidia > 80)
+infected_cell_barcodes_80 <- colnames(cells_with_microsporidia_80)
+infected_cell_barcodes_80 <- data.frame(infected_cell_barcodes_80)
+dim(infected_cell_barcodes_80) 
+#  15
+# add the infected cell barcodes to the metadata of Expt1_VeroOnly
+Expt1_VeroOnly$infected_cell_80<- ifelse(rownames(Expt1_VeroOnly@meta.data) %in% infected_cell_barcodes_80$infected_cell_barcodes_80, "Yes", "No")
+
+# number of infected cells across time points and clusters with a 2% microsporidia cut off
+infected_timepointsANDclusters_80<- table(Expt1_VeroOnly@meta.data$HTO_maxID, Expt1_VeroOnly$renamed_idents, Expt1_VeroOnly@meta.data$infected_cell_80)
+infected_timepointsANDclusters_80 <- as.data.frame(infected_timepointsANDclusters_80)
+colnames(infected_timepointsANDclusters_80) <- c("Condition", "Cluster", "infected_cell_80", "Cell_Count")
+write.csv(infected_timepointsANDclusters_80, file = "no_infected_cells_80.csv", row.names = FALSE)
+
+Idents(Expt1_VeroOnly) <- "infected_cell_0.2"
+png("UMAP_Vero_res0.2_YesNo_microsporidia.png", width = 12, height = 10, units = "cm", res = 300)
+DimPlot(Expt1_VeroOnly, pt.size = 0.1, label.size = 5, cols = c("gray","mediumblue"))
+dev.off()
