@@ -16,14 +16,21 @@ Vero infected cell dataset: contains 24,543 cells (12 hpi, 18 hpi, 24 hpi, 36 hp
 
 A combined reference genome containing both the human genome (GRch38; GCF_000001405.40; contains nuclear and mitochondrial genomes) and the *E. intestinalis* genome (ATCC 50506; GCF_000146465.1) or the African Green Monkey genome (GCF_000409795.2) and the *E. intestinalis* genome was generated using Cell Ranger software version 9.0.1 with the Cell Ranger mkref function (10X Genomics, USA). Raw sequencing reads were mapped to the combined reference genome and the gene expression matrices were generated using the Cell Ranger count function with default parameters. 
 
-The raw sequencing reads from all three libraries can be downloaded from NCBI GEO (NCBI GEO accession no: )
+The raw sequencing reads from all three libraries can be downloaded from NCBI GEO (NCBI GEO accession no:GSE347271)
 
 Gene expression matrices were processed using Seurat in R using three strategies
 
 1. Total transcriptome processing: The combined host and parasite transcriptomes were analyzed in the Caco-2 infected cell dataset or the Vero infected cell dataset.
-2. Parasite only transcripts processing:
-3. Human only transcripts processing:
-4. Vero only transcripts processing:
+* 
+* 
+
+2. Parasite only transcripts processing: Parasite transcripts were separated prior to scRNA-seq analysis in Seurat in order to understand the dynamics of *E. intestinalis* gene expression during parasite development and if it differs between the two host cell lines.
+* 
+* 
+   
+3. Host only transcripts processing: Host transcripts were separated prior to scRNA-seq analysis in Seurat in order to understand the host response to *E. intestinalis* infection in both Caco-2 and Vero cells.
+* 
+* 
 
 **List of tools/versions used in this study**
 
