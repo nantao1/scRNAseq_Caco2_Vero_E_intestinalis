@@ -21,8 +21,8 @@ The raw sequencing reads from all three libraries can be downloaded from NCBI GE
 Gene expression matrices were processed using Seurat in R using three strategies
 
 1. Total transcriptome processing: The combined host and parasite transcriptomes were analyzed in the Caco-2 infected cell dataset or the Vero infected cell dataset.
-* [Total_Transcriptome_Caco2_infected_cell_dataset](https://github.com/nantao1/scRNAseq_Caco2_Vero_E_intestinalis/blob/fe971876bd306cb2c1f1cb2ff23b4ab2efc5b406/Total_Transcriptome_Caco2_infected_cell_dataset)
-* 
+* [Total Transcriptome:Caco2 infected cell dataset](https://github.com/nantao1/scRNAseq_Caco2_Vero_E_intestinalis/blob/fe971876bd306cb2c1f1cb2ff23b4ab2efc5b406/Total_Transcriptome_Caco2_infected_cell_dataset)
+* [Total Transcriptome:Vero infected cell dataset]
 
 2. Parasite only transcripts processing: Parasite transcripts were separated prior to scRNA-seq analysis in Seurat in order to understand the dynamics of *E. intestinalis* gene expression during parasite development and if it differs between the two host cell lines.
 * 
