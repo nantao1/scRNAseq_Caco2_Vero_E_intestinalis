@@ -91,9 +91,9 @@ p3 <- DimPlot(Expt1_MicrosporidiaOnly, group.by = "RNA_snn_res.0.3", label = TRU
 p4 <- DimPlot(Expt1_MicrosporidiaOnly, group.by = "RNA_snn_res.0.4", label = TRUE, cols = "Paired") + ggtitle("Resolution 0.4")
 p1 + p2 + p3 + p4
 
-#save old cluster system (RNA_snn_res.0.2) as a reference
+#save old cluster system (RNA_snn_res.0.4) as a reference
 Idents(Expt1_MicrosporidiaOnly) <- "RNA_snn_res.0.4"
-Expt1_MicrosporidiaOnly[["Old.cluster0.2"]] <- Idents(Expt1_MicrosporidiaOnly)
+Expt1_MicrosporidiaOnly[["Old.cluster0.4"]] <- Idents(Expt1_MicrosporidiaOnly)
 view(Expt1_MicrosporidiaOnly)
 
 #Name new cluster system
