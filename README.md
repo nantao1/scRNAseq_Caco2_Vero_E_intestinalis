@@ -40,4 +40,7 @@ Gene expression matrices were processed using Seurat in R using three strategies
 * tidyverse 
 * dplyr 
 * RColorBrewer 
-* ggplot2 
+* ggplot2
+* fgsea
+* msigdbr
+* data.table
