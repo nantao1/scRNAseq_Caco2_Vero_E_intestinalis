@@ -1,0 +1,183 @@
+library(fgsea)
+library(msigdbr)
+library(ggplot2)
+library(dplyr)
+library(data.table)
+
+getwd()
+setwd("/vast/gbhabha1/JHU_hot_data/home/nantao1/scrnaseq/processing/20250815/NVASC048/20260721_Caco2_All")
+# Load markers (containing both positive and negative log2FC)
+markers <- read.csv("NVASC043_LogNorm_RNA_allmarkers_cluster1to6.csv")
+
+# Check structure
+head(markers)
+
+# Verify you have both directions
+cat("Log2FC range:", range(markers$avg_log2FC), "\n")
+#Log2FC range: -6.645048 8.397187 
+cat("Upregulated genes:", sum(markers$avg_log2FC > 0), "\n")
+#Upregulated genes: 12382
+cat("Downregulated genes:", sum(markers$avg_log2FC < 0), "\n")
+#Downregulated genes: 14031  
+
+# Hallmark gene sets (most commonly used)
+hallmark <- msigdbr(species = "Homo sapiens", category = "H")
+hallmark_list <- split(hallmark$gene_symbol, hallmark$gs_name)
+
+# Optional: Other useful gene set collections
+# KEGG pathways
+kegg <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG_LEGACY")
+kegg_list <- split(kegg$gene_symbol, kegg$gs_name)
+
+# GO Biological Process
+go_bp <- msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP")
+go_bp_list <- split(go_bp$gene_symbol, go_bp$gs_name)
+
+# Reactome pathways
+reactome <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:REACTOME")
+reactome_list <- split(reactome$gene_symbol, reactome$gs_name)
+
+# Check what you have
+cat("Hallmark sets:", length(hallmark_list), "\n")
+#Hallmark sets: 50
+cat("KEGG sets:", length(kegg_list), "\n")
+#KEGG sets: 186 
+cat("GO BP sets:", length(go_bp_list), "\n")
+#GO BP sets: 7538
+cat("Reactome sets:", length(reactome_list), "\n")
+#Reactome sets: 1839 
+
+#Create a ranked list function
+create_ranked_list <- function(markers, cluster_id) {
+  
+  # Filter for cluster
+  cluster_data <- markers[markers$cluster == cluster_id, ]
+  
+  # Create named vector: names = genes, values = log2FC
+  gene_ranks <- setNames(cluster_data$avg_log2FC, cluster_data$gene)
+  
+  # Handle duplicates (keep gene with highest absolute log2FC)
+  if(any(duplicated(names(gene_ranks)))) {
+    gene_ranks <- tapply(gene_ranks, names(gene_ranks), function(x) x[which.max(abs(x))])
+  }
+  
+  # Sort descending (most upregulated first, most downregulated last)
+  gene_ranks <- sort(gene_ranks, decreasing = TRUE)
+  
+  # Print summary
+  cat("\n", cluster_id, "ranked gene list:\n")
+  cat("  Total genes:", length(gene_ranks), "\n")
+  cat("  Upregulated (>0):", sum(gene_ranks > 0), "\n")
+  cat("  Downregulated (<0):", sum(gene_ranks < 0), "\n")
+  cat("  Top 3:", head(names(gene_ranks), 3), "\n")
+  cat("  Bottom 3:", tail(names(gene_ranks), 3), "\n")
+  
+  return(gene_ranks)
+}
+
+# fGSEA function
+run_fgsea_analysis <- function(gene_ranks, gene_sets, min_size = 15, max_size = 500) {
+  
+  # Run fgsea
+  fgsea_results <- fgsea(
+    pathways = gene_sets,
+    stats = gene_ranks,
+    minSize = min_size,
+    maxSize = max_size
+  )
+  
+  # Add direction column based on NES
+  fgsea_results$direction <- ifelse(
+    fgsea_results$NES > 0, 
+    "Activated", 
+    "Suppressed"
+  )
+  
+  # Sort by p-value
+  fgsea_results <- fgsea_results[order(pval), ]
+  
+  # Print summary
+  n_sig <- sum(fgsea_results$padj < 0.05, na.rm = TRUE)
+  n_activated <- sum(fgsea_results$padj < 0.05 & fgsea_results$NES > 0, na.rm = TRUE)
+  n_suppressed <- sum(fgsea_results$padj < 0.05 & fgsea_results$NES < 0, na.rm = TRUE)
+  
+  cat("  Significant pathways (padj < 0.05):", n_sig, "\n")
+  cat("    Activated:", n_activated, "\n")
+  cat("    Suppressed:", n_suppressed, "\n")
+  
+  return(fgsea_results)
+}
+
+# run analysis for all clusters
+# Get unique clusters
+clusters <- unique(markers$cluster)
+cat("Clusters found:", paste(clusters, collapse = ", "), "\n")
+
+# Create output directory
+output_dir <- "fgsea_results"
+dir.create(output_dir, showWarnings = FALSE)
+
+# Store results
+fgsea_hallmark <- list()
+fgsea_kegg <- list()
+
+# Run for each cluster
+for(cluster_id in clusters) {
+  
+  cat("\n========================================\n")
+  cat("Processing:", cluster_id, "\n")
+  cat("========================================\n")
+  
+  # Create ranked list
+  gene_ranks <- create_ranked_list(markers, cluster_id)
+  
+  # Run Hallmark
+  cat("\nHallmark pathways:\n")
+  fgsea_hallmark[[cluster_id]] <- run_fgsea_analysis(gene_ranks, hallmark_list)
+  
+  # Run KEGG
+  cat("\nKEGG pathways:\n")
+  fgsea_kegg[[cluster_id]] <- run_fgsea_analysis(gene_ranks, kegg_list)
+}
+
+# Warning messages:1: In fgseaMultilevel(pathways = pathways, stats = stats, minSize = minSize,:For some pathways, in reality P-values are less than 1e-50. You can set the `eps` argument to zero for better estimation.2: In fgseaMultilevel(pathways = pathways, stats = stats, minSize = minSize,  :There were 5 pathways for which P-values were not calculated properly due to unbalanced (positive and negative) gene-level statistic values. For such pathways pval, padj, NES, log2err are set to NA. You can try to increase the value of the argument nPermSimple (for example set it nPermSimple = 10000) 3: In fgseaMultilevel(pathways = pathways, stats = stats, minSize = minSize,  :There were 8 pathways for which P-values were not calculated properly due to unbalanced (positive and negative) gene-level statistic values. For such pathways pval, padj, NES, log2err are set to NA. You can try to increase the value of the argument nPermSimple (for example set it nPermSimple = 10000), 4: In fgseaMultilevel(pathways = pathways, stats = stats, minSize = minSize,  : For some of the pathways the P-values were likely overestimated. For such pathways log2err is set to NA.
+
+#Save results
+# Function to save fgsea results
+save_fgsea_results <- function(fgsea_result, filename) {
+  
+  # Convert to data frame
+  df <- as.data.frame(fgsea_result)
+  
+  # Convert leadingEdge list to comma-separated string
+  df$leadingEdge <- sapply(df$leadingEdge, function(x) {
+    paste(x, collapse = ", ")
+  })
+  
+  # Save CSV
+  write.csv(df, filename, row.names = FALSE)
+  cat("✓ Saved:", filename, "\n")
+}
+
+# Save all results
+for(cluster_id in clusters) {
+  
+  # Save Hallmark
+  save_fgsea_results(
+    fgsea_hallmark[[cluster_id]],
+    file.path(output_dir, paste0(cluster_id, "_Hallmark_fgsea.csv"))
+  )
+  
+  # Save KEGG
+  save_fgsea_results(
+    fgsea_kegg[[cluster_id]],
+    file.path(output_dir, paste0(cluster_id, "_KEGG_fgsea.csv"))
+  )
+  
+  # Save RDS for later use
+  saveRDS(fgsea_hallmark[[cluster_id]], 
+          file.path(output_dir, paste0(cluster_id, "_Hallmark_fgsea.rds")))
+}
+
+
+# Repeat analysis for Vero infected cell dataset.
